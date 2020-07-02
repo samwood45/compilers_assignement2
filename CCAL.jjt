@@ -1,0 +1,348 @@
+/* CCAL LANGUAGE*/
+
+options {
+	IGNORE_CASE = true;
+	VISITOR = true;
+	MULTI = true;
+	NODE_DEFAULT_VOID = true;
+}
+PARSER_BEGIN(CCAL)
+import java.util.*;
+import java.io.*;
+
+public class CCAL
+{
+
+	public static SymTable symbolTable = new SymTable();
+    public static String scope = "program";
+
+	public static void main(String [] args ) {
+
+		CCAL tokeniser;
+		if (args.length == 0) {
+			System.out.println("Now reading the input.");
+			tokeniser = new CCAL(System.in);
+		}	
+
+		else if (args.length == 1) {
+
+			try {
+				tokeniser = new CCAL(new java.io.FileInputStream(args[0]));
+				}
+			catch (java.io.FileNotFoundException e) {
+			System.out.println("File " + args[0] + " not found.");
+			return;
+			}
+		}
+
+		else {
+			System.out.println("CCAL: Usage is one of:");
+			System.out.println(" java CCAL < inputfile");
+			System.out.println("OR");
+			System.out.println(" java CCAL inputfile");
+			return;
+		}
+
+		try{ 
+		SimpleNode root = tokeniser.program();
+	
+		System.out.println("           \n Abstract Syntax Tree \n");
+		root.dump("");
+
+		Analyzer analyze = new Analyzer();
+		root.jjtAccept(analyze, symbolTable);
+
+		
+        System.out.println("           \n Symbol Table \n ");            
+        symbolTable.tablePrint();
+		
+		System.out.println("Input has now successfully parsed.");
+	
+ }
+	catch(ParseException e){
+		System.out.println("Input translation failed during parsing");
+		System.out.println(e.getMessage());
+	}
+
+	catch(TokenMgrError e){
+		System.out.println("Input translation failed during parsing");
+		System.out.println(e.getMessage());
+	}
+   }
+	
+}
+PARSER_END(CCAL)
+
+
+//skip tokens
+
+SKIP :{ " "| "\n" | "\r" | "\r\n" | "\t" }
+
+//skip single line comments
+
+SKIP : {
+    <"//" (~["\n","\r"])* ("\n" | "\r" | "\r\n")>
+}
+
+SKIP : {
+    "/*" { commentNesting++; } : IN_COMMENT
+}
+
+TOKEN_MGR_DECLS :
+{
+	static int commentNesting = 0;
+}
+
+<IN_COMMENT> SKIP : {
+    "/*" { commentNesting++; }
+    | "*/" { commentNesting--;
+        if (commentNesting == 0)
+            SwitchTo(DEFAULT);
+    	}
+    | <~[]>
+}
+
+//reserved words 
+
+TOKEN: { 
+ <VARIABLE : "var">
+| <CONSTANT : "const">
+| <RETURN : "return">
+| <INTEGER :"integer">
+| <BOOLEAN : "boolean">
+| <VOID : "void">
+| <MAIN : "main">
+| <IF : "if">
+| <ELSE : "else">
+| <TRUE : "true">
+| <FALSE : "false">
+| <WHILE : "while">
+| <SKIP_TOKEN : "skip">
+ }
+
+//parameters and operators
+
+TOKEN :{
+ <COMMA: ","> 
+| <SEMICOLON : ";"> 
+| <COLON : ":"> 
+| <ASSIGN: "="> 
+| <LEFTCBRACKET : "{"> 
+| <RIGHTCBRACKET : "}"> 
+| <LEFTBRACKET : "("> 
+| <RIGHTBRACKET : ")"> 
+| <PLUS : "+"> 
+| <MINUS : "-"> 
+| <NEGATE : "~"> 
+| <OR : "||"> 
+| <AND : "&&"> 
+| <ISEQUALTO: "=="> 
+| <NOTEQUALS: "!="> 
+| <LT: "<"> 
+| <LT_EQ: "<="> 
+| <GT : ">"> 
+| <GT_EQ: ">="> 
+}
+
+//Numbers and identifiers
+
+TOKEN : { 
+<NUM : (["0"]) | ("-")? ["1" -"9"] (<DIGIT>)*>
+| <#DIGIT : ["0"-"9"]>
+| <#LETTER : ["a" -"z", "A"-"Z"]> 
+| <ID : <LETTER> (<LETTER>| <DIGIT> | "_")* >
+  }
+
+TOKEN:
+{
+<OTHER : ~[]>
+}
+
+//Grammar
+
+SimpleNode program() #Program:
+{}
+{
+	Decl_List() Function_List() Main() <EOF> {return jjtThis;}
+}
+
+String Id() #Identifier: {Token t;}
+{
+	(t = <ID>) {jjtThis.value = t.image; return t.image;}
+}
+
+String type() #Type : {Token t;}
+{
+		(t = <INTEGER>) {jjtThis.value = t.image; return t.image;}
+	| 	(t =  <BOOLEAN>) {jjtThis.value = t.image; return t.image;}
+	| 	(t =  <VOID>) {jjtThis.value = t.image; return t.image;}
+}
+
+
+void Number() #Number : {Token t;}
+{
+	t = <NUM> {jjtThis.value = t.image;}
+}
+
+void Decl_List():
+{}
+{
+	(Decl() <SEMICOLON> Decl_List())?
+}
+
+void Decl():
+{}
+{
+	(Var_Decl() | Const_Decl() )
+}
+
+void Var_Decl() #Variable_Declaration:
+{Token t; String id; String type;}
+{
+	t = <VARIABLE> id = Id() <COLON> type = type() {jjtThis.value = t.image; symbolTable.put(id,type,"variable",scope);}
+}
+
+void Const_Decl() #Constant_Declaration:
+{Token t; String id; String type;}
+{
+	t= <CONSTANT> id = Id() <COLON> type = type() <ASSIGN> Expression() {jjtThis.value = t.image; symbolTable.put(id,type,"constant",scope);}
+}
+
+
+
+void Function_List():
+{}
+{
+	(Function() Function_List())?
+}
+
+void Function() #Function:
+{Token t; String type; String id;}
+{
+	type = type() id = Id() {symbolTable.put(id,type,"function",scope);
+    scope=id; } <LEFTBRACKET> Parameter_List() <RIGHTBRACKET>
+	<LEFTCBRACKET>
+	Decl_List()
+	Statement_Block()
+	<RETURN> <LEFTBRACKET> (Expression())? <RIGHTBRACKET> <SEMICOLON>
+	<RIGHTCBRACKET>
+}
+
+
+void Parameter_List():
+{}
+{
+	(Nemp_Parameter_List())?
+}
+
+void Nemp_Parameter_List() #NParamList: {Token t; String type; String id;}
+{
+	id = Id() <COLON> type =type() (<COMMA> Nemp_Parameter_List())?
+	{ symbolTable.put(id,type,"parameter",scope); }
+}
+
+void Main() #Main:
+{}
+{
+	{scope = "main";}
+	<MAIN>
+	<LEFTCBRACKET>
+	Decl_List()
+	Statement_Block()
+	<RIGHTCBRACKET>
+}
+void Statement_Block() :
+{}
+{
+	(Statement() Statement_Block())?
+}
+
+void Statement() #Statement:
+{}
+{
+	<ID> Statement_P()
+| 	<LEFTCBRACKET> Statement_Block() <RIGHTCBRACKET>
+|	<IF> Condition() <LEFTCBRACKET> Statement_Block() <RIGHTCBRACKET> <ELSE> <LEFTCBRACKET> Statement_Block() <RIGHTCBRACKET>
+| <WHILE> Condition() <LEFTCBRACKET> Statement_Block() <RIGHTCBRACKET>
+|	<SKIP_TOKEN> <SEMICOLON>
+}
+
+void Statement_P():
+{}
+{
+	<ASSIGN> Expression() <SEMICOLON>
+| 	<LEFTBRACKET> Arg_List() <RIGHTBRACKET> <SEMICOLON>
+}
+
+void Expression():
+{}
+{
+	Fragment() Expression_P()
+| 	<LEFTBRACKET> Expression() <RIGHTBRACKET>
+Expression_P()
+}
+
+void Expression_P():
+{}
+{
+	(Binary_Arith_Op() Expression())?
+}
+
+void Binary_Arith_Op():
+{}
+{
+	<PLUS> | <MINUS>
+}
+
+void Fragment():
+{}
+{
+	(<MINUS>)? <ID> (<LEFTBRACKET>Arg_List()<RIGHTBRACKET>)?
+| 	<NUM>
+| 	<TRUE>
+|	<FALSE>
+}
+
+void Condition():
+{}
+{
+	<NEGATE> Condition()
+| 	<LEFTBRACKET> Condition() <RIGHTBRACKET>
+Bool_Condition()
+| Condition_P() Bool_Condition()
+}
+
+void Bool_Condition() :
+{}
+{
+	((<OR> | <AND>) Condition())?
+}
+
+void Condition_P():
+{}
+{
+	Fragment() Comp_Op()
+}
+
+void Comp_Op() #comp:
+{}
+{
+	<ISEQUALTO> Expression()
+|	<NOTEQUALS> Expression()
+| 	<LT> Expression()
+| 	<LT_EQ> Expression()
+| 	<GT> Expression()
+|	<GT_EQ> Expression()
+}
+
+void Arg_List() #Arg_List:
+{}
+{
+	(Nemp_Arg_List())?
+}
+
+void Nemp_Arg_List():
+{}
+{
+	(<ID> (<COMMA> Nemp_Arg_List())?)
+}
